@@ -1,0 +1,32 @@
+[package]
+name = "mp3tags_r"
+version = "0.1.0"
+edition = "2021"
+authors = ["Max <da19141@.gmail.com>"]
+description = "A Rust library for reading and writing MP3 tags (ID3 and APE)"
+license = "MIT"
+repository = "https://github.com/username/mp3tags_r"
+readme = "README.md"
+
+[dependencies]
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.8"
+
+[[example]]
+name = "read_tag"
+path = "examples/read_tag.rs"
+
+[[example]]
+name = "write_tag"
+path = "examples/write_tag.rs"
+
+[[example]]
+name = "handle_directory"
+path = "examples/handle_directory.rs"
+
+[lib]
+name = "mp3tags_r"
+path = "src/lib.rs"
