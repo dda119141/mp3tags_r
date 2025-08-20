@@ -32,16 +32,31 @@ fn get_specific_frame(path: &Path, target_frame_id: &str) -> Result<Frame> {
 
     let mut offset = 0;
     while offset < tag_size as usize {
-        let frame = Frame::parse(&tag_buf[offset..], header.version)?;
-        if frame.is_empty() {
+        // Check if we have enough bytes for a frame header
+        if offset + 10 > tag_size as usize {
             break;
         }
 
-        if frame.id == target_frame_id {
+        // Read frame ID directly from bytes (much faster than full parsing)
+        let frame_id_bytes = &tag_buf[offset..offset + 4];
+        
+        // Check for empty frame (all zeros)
+        if frame_id_bytes.iter().all(|&b| b == 0) {
+            break;
+        }
+
+        let frame_id = String::from_utf8_lossy(frame_id_bytes);
+
+        // If this is our target frame, parse it fully
+        if frame_id == target_frame_id {
+            let frame = Frame::parse(&tag_buf[offset..], header.version)?;
             return Ok(frame);
         }
 
-        offset += frame.total_size();
+        // Skip to next frame using size from header
+        let size_bytes = [tag_buf[offset + 4], tag_buf[offset + 5], tag_buf[offset + 6], tag_buf[offset + 7]];
+        let frame_size = u32::from_be_bytes(size_bytes) as usize;
+        offset += 10 + frame_size; // Header (10) + data size
     }
 
     return Err(Error::FrameIdNotFound(target_frame_id.to_string()));
@@ -87,23 +102,20 @@ impl TagReaderStrategy for TagReader {
         Ok(())
     }
 
-    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<Option<String>> {
-        // Check if we have an ID3v2 tag at all
-        if !has_id3v2_tag(path).unwrap_or(false) {
-            return Ok(None);
-        }
-
-        // Get the version to determine the correct frame ID
-        let version = get_id3v2_version(path)?;
-        let frame_id = get_frame_id_for_version(entry, version);
+    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String> {
+        // Use the cached tag info from init()
+        let tag = self.tag.as_ref().ok_or(Error::TagNotFound)?;
+        
+        // Use the cached version instead of re-reading the file
+        let frame_id = get_frame_id_for_version(entry, tag.version);
         
         if let Some(id) = frame_id {
             match get_specific_frame(path, id) {
-                Ok(frame) => Ok(Some(frame.content)),
-                Err(_) => Ok(None),
+                Ok(frame) => Ok(frame.content),
+                Err(_) => Err(Error::EntryNotFound),
             }
         } else {
-            Ok(None)
+            Err(Error::EntryNotFound)
         }
     }
 

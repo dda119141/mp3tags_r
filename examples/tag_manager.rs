@@ -3,7 +3,7 @@ use std::{collections::HashMap, env};
 use std::path::Path;
 use std::process;
 
-use mp3tags_r::{MetaEntry, TagReader, TagWriter, TagType};
+use mp3tags_r::{TagReader, TagWriter, MetaEntry, TagType, Result, Error};
 
 fn print_usage() {
     println!("MP3 Tag Manager - A simple tool to read and modify MP3 tags");
@@ -39,7 +39,7 @@ fn print_usage() {
     println!("  tag_manager clear song.mp3");
 }
 
-fn parse_meta_entry(tag: &str) -> Result<MetaEntry, String> {
+fn parse_meta_entry(tag: &str) -> std::result::Result<MetaEntry, String> {
     match tag.to_lowercase().as_str() {
         "title" => Ok(MetaEntry::Title),
         "artist" => Ok(MetaEntry::Artist),
@@ -62,7 +62,7 @@ fn read_tags(file_path: &Path) -> Result<()> {
     
     // error handling check if the map is empty 
     if entries.is_empty() {
-        return Err("No tags found in the file".into());
+        return Err(Error::Other("No tags found in the file".to_string()));
     }
 
     // Print tags in a specific order
@@ -95,7 +95,7 @@ fn read_tags(file_path: &Path) -> Result<()> {
 
 fn get_tag(file_path: &Path, tag: &str) -> Result<()> {
     // Parse the meta entry
-    let meta_entry = parse_meta_entry(tag).map_err(|e| format!("Invalid tag: {}", e))?;
+    let meta_entry = parse_meta_entry(tag).map_err(|e| Error::Other(format!("Invalid tag: {}", e)))?;
     
     // Create a new tag reader
     let reader = TagReader::new(file_path)?;
@@ -109,7 +109,7 @@ fn get_tag(file_path: &Path, tag: &str) -> Result<()> {
 
 fn set_tag(file_path: &Path, tag: &str, value: &str, tag_type: Option<&str>) -> Result<()> {
     // Parse the meta entry
-    let meta_entry = parse_meta_entry(tag).map_err(|e| format!("Invalid tag: {}", e))?;
+    let meta_entry = parse_meta_entry(tag).map_err(|e| Error::Other(format!("Invalid tag: {}", e)))?;
     
     // Create a new tag writer
     let mut writer = TagWriter::new(file_path)?;
@@ -133,7 +133,7 @@ fn set_tag(file_path: &Path, tag: &str, value: &str, tag_type: Option<&str>) -> 
 
 fn remove_tag(file_path: &Path, tag: &str) -> Result<()> {
     // Parse the meta entry
-    let meta_entry = parse_meta_entry(tag).map_err(|e| format!("Invalid tag: {}", e))?;
+    let meta_entry = parse_meta_entry(tag).map_err(|e| Error::Other(format!("Invalid tag: {}", e)))?;
     
     // Create a new tag writer
     let mut writer = TagWriter::new(file_path)?;
@@ -174,7 +174,7 @@ fn clear_tags(file_path: &Path) -> Result<()> {
     
     // If any errors occurred, return them as a combined error
     if !errors.is_empty() {
-        return Err(format!("Some tags could not be removed: {}", errors.join(", ")).into());
+        return Err(Error::Other(format!("Some tags could not be removed: {}", errors.join(", "))));
     }
     
     println!("All tags removed.");

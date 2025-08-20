@@ -84,18 +84,18 @@ impl TagReaderStrategy for TagReader {
         Ok(())
     }
 
-    fn get_meta_entry(&self, _path: &Path, entry: &MetaEntry) -> Result<Option<String>> {
+    fn get_meta_entry(&self, _path: &Path, entry: &MetaEntry) -> Result<String> {
         if let Some(tag) = &self.tag {
             match entry {
-                MetaEntry::Title => Ok(Some(String::from_utf8_lossy(&tag.title).trim_end().to_string())),
-                MetaEntry::Artist => Ok(Some(String::from_utf8_lossy(&tag.artist).trim_end().to_string())),
-                MetaEntry::Album => Ok(Some(String::from_utf8_lossy(&tag.album).trim_end().to_string())),
-                MetaEntry::Year => Ok(Some(String::from_utf8_lossy(&tag.year).trim_end().to_string())),
-                MetaEntry::Comment => Ok(Some(String::from_utf8_lossy(&tag.comment).trim_end().to_string())),
-                _ => Ok(None),
+                MetaEntry::Title => Ok(String::from_utf8_lossy(&tag.title).trim_end().to_string()),
+                MetaEntry::Artist => Ok(String::from_utf8_lossy(&tag.artist).trim_end().to_string()),
+                MetaEntry::Album => Ok(String::from_utf8_lossy(&tag.album).trim_end().to_string()),
+                MetaEntry::Year => Ok(String::from_utf8_lossy(&tag.year).trim_end().to_string()),
+                MetaEntry::Comment => Ok(String::from_utf8_lossy(&tag.comment).trim_end().to_string()),
+                _ => Err(Error::EntryNotFound),
             }
         } else {
-            Ok(None)
+            Err(Error::TagNotFound)
         }
     }
 

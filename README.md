@@ -121,21 +121,19 @@ fn main() -> Result<()> {
 ### Error Handling
 
 ```rust
-use mp3tags_r::{TagReader, MetaEntry, Error};
+use mp3tags_r::{TagReader, MetaEntry, Error, Result};
 
-fn read_tags_safely(path: &str) {
-    match TagReader::new(path) {
-        Ok(mut reader) => {
-            match reader.get_meta_entry(&MetaEntry::Title) {
-                Ok(Some(title)) => println!("Title: {}", title),
-                Ok(None) => println!("No title found"),
-                Err(Error::FileError(e)) => eprintln!("File error: {}", e),
-                Err(Error::TagNotFound) => eprintln!("No tags found"),
-                Err(e) => eprintln!("Other error: {}", e),
-            }
-        }
-        Err(e) => eprintln!("Failed to create reader: {}", e),
+fn read_tags_safely(path: &str) -> Result<()> {
+    let reader = TagReader::new(path)?;
+    
+    match reader.get_meta_entry(&MetaEntry::Title) {
+        Ok(title) => println!("Title: {}", title),
+        Err(Error::EntryNotFound) => println!("No title found"),
+        Err(Error::TagNotFound) => println!("No tags found in file"),
+        Err(e) => eprintln!("Error reading title: {}", e),
     }
+    
+    Ok(())
 }
 ```
 

@@ -28,19 +28,19 @@ pub struct TagPresence {
 }
 
 
-/// Trait for tag readers
+/// Simple trait for tag readers
 pub trait TagReaderStrategy {
     /// Initialize the tag reader
     fn init(&mut self, path: &Path) -> Result<()>;
         
     /// Get a meta entry from the tag
-    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<Option<String>>;
+    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String>;
     
     /// Get the tag type
     fn tag_type(&self) -> TagType;
 }
 
-/// Trait for tag writers
+/// Simple trait for tag writers
 pub trait TagWriterStrategy {
     /// Initialize the tag writer
     fn init(&mut self, path: &Path) -> Result<()>;
@@ -73,8 +73,17 @@ impl ReaderStrategy {
         }
     }
     
+    /// Initialize this strategy
+    pub fn init(&mut self, path: &Path) -> Result<()> {
+        match self {
+            ReaderStrategy::Id3v1(reader) => reader.init(path),
+            ReaderStrategy::Id3v2(reader) => reader.init(path),
+            ReaderStrategy::Ape(reader) => reader.init(path),
+        }
+    }
+    
     /// Get a meta entry using this strategy
-    pub fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<Option<String>> {
+    pub fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String> {
         match self {
             ReaderStrategy::Id3v1(reader) => reader.get_meta_entry(path, entry),
             ReaderStrategy::Id3v2(reader) => reader.get_meta_entry(path, entry),
@@ -86,7 +95,7 @@ impl ReaderStrategy {
 /// Main tag reader class that uses the strategy pattern
 pub struct TagReader {
     path: PathBuf,
-    strategies: Vec<ReaderStrategy>,
+    pub strategies: Vec<ReaderStrategy>,
 }
 
 impl TagReader {
@@ -106,13 +115,16 @@ impl TagReader {
             strategies,
         };
         
-        reader.init()?;
+        reader.init_strategies()?;
         
         Ok(reader)
     }
     
-    /// Initialize the reader
-    fn init(&mut self) -> Result<()> {
+    /// Initialize the reader - now properly initializes all strategies
+    fn init_strategies(&mut self) -> Result<()> {
+        for strategy in &mut self.strategies {
+            let _ = strategy.init(&self.path); // Don't fail if one strategy fails
+        }
         Ok(())
     }
     
@@ -120,13 +132,34 @@ impl TagReader {
     pub fn get_meta_entry(&self, entry: &MetaEntry) -> Result<String> {
         // Try each strategy in order until we find a value
         for strategy in &self.strategies {
-            if let Ok(Some(value)) = strategy.get_meta_entry(&self.path, entry) {
+            if let Ok(value) = strategy.get_meta_entry(&self.path, entry) {
                 return Ok(value);
             }
         }
 
         // If no tag was found after trying all strategies, return an error.
         Err(Error::EntryNotFound)
+    }
+    
+    /// Add a strategy to the reader
+    pub fn add_strategy(&mut self, strategy: ReaderStrategy) -> Result<()> {
+        self.strategies.push(strategy);
+        Ok(())
+    }
+    
+    /// Get tag presence information
+    pub fn tag_presence(&self) -> TagPresence {
+        let mut presence = TagPresence::default();
+        
+        for strategy in &self.strategies {
+            match strategy.tag_type() {
+                TagType::Id3v1 => presence.id3v1_present = true,
+                TagType::Id3v2 => presence.id3v2_present = true,
+                TagType::Ape => presence.ape_present = true,
+            }
+        }
+        
+        presence
     }
     
     /// Get all meta entries from the tag
@@ -192,7 +225,7 @@ impl WriterStrategy {
 /// Main tag writer class that uses the strategy pattern
 pub struct TagWriter {
     path: PathBuf,
-    strategies: Vec<WriterStrategy>,
+    pub strategies: Vec<WriterStrategy>,
     preferred_tag_type: TagType,
 }
 
@@ -296,6 +329,32 @@ impl TagWriter {
         }
         
         Err(Error::Other("Failed to set meta entry".to_string()))
+    }
+    
+    /// Add a strategy to the writer
+    pub fn add_strategy(&mut self, strategy: WriterStrategy) -> Result<()> {
+        self.strategies.push(strategy);
+        Ok(())
+    }
+    
+    /// Remove a meta entry from the tag
+    pub fn remove_meta_entry(&mut self, entry: MetaEntry) -> Result<()> {
+        // For now, just set to empty string - actual removal would need strategy-specific implementation
+        self.set_meta_entry(&entry, "")
+    }
+    
+    /// Remove multiple meta entries from the tag
+    pub fn remove_meta_entries(&mut self, entries: &[MetaEntry]) -> Result<()> {
+        for entry in entries {
+            self.remove_meta_entry(entry.clone())?;
+        }
+        Ok(())
+    }
+    
+    /// Remove all meta entries from the tag
+    pub fn remove_all_meta_entries(&mut self) -> Result<()> {
+        let all_entries = crate::meta_entry::all_standard_entries();
+        self.remove_meta_entries(&all_entries)
     }
     
 }

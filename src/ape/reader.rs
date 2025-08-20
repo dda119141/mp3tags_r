@@ -74,14 +74,14 @@ impl ApeTag {
     }
     
     /// Get a text item value by key
-    pub fn get_item_text(&self, key: &str) -> Result<Option<String>> {
+    pub fn get_item_text(&self, key: &str) -> Result<String> {
         let item = match self.get_item(key) {
             Some(item) => item,
-            None => return Ok(None),
+            None => return Err(Error::EntryNotFound),
         };
 
         self.validate_text_item(item)?;
-        self.item_value_to_string(item).map(Some)
+        self.item_value_to_string(item)
     }
 
     /// Validate that an item is a text item (not binary)
@@ -399,14 +399,14 @@ impl TagReaderStrategy for ApeReader {
         Ok(())
     }
     
-    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<Option<String>> {
+    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String> {
         match self.read_tag(path) {
             Ok(tag) => {
                 let key = meta_entry_to_ape_key(entry);
-                tag.get_item_text(key)
-            },
-            Err(Error::TagNotFound) => Ok(None),
-            Err(e) => Err(e),
+                let entry = tag.get_item_text(key)?;
+                Ok(entry)
+            }
+            Err(e) => Err(e)
         }
     }
     
