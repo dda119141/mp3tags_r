@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use log::{warn};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -15,8 +16,11 @@ use crate::id3::v2::version::Version;
 use crate::meta_entry::MetaEntry;
 use crate::tag::{TagReaderStrategy, TagType, TagWriterStrategy};
 
-/// Read a specific frame from ID3v2 tag 
-fn get_specific_frame(path: &Path, target_frame_id: &str) -> Result<Frame> {
+const FRAME_HEADER_SIZE: usize = 10;
+const FRAME_ID_SIZE: usize = 4;
+
+/// Read all frames from an ID3v2 tag
+fn read_tag(path: &Path) -> Result<Tag> {
     let mut file = File::open(path)?;
     let mut header_buf = [0u8; HEADER_SIZE];
     file.read_exact(&mut header_buf)?;
@@ -30,55 +34,64 @@ fn get_specific_frame(path: &Path, target_frame_id: &str) -> Result<Frame> {
     let mut tag_buf = vec![0u8; tag_size as usize];
     file.read_exact(&mut tag_buf)?;
 
+    let mut frames = HashMap::new();
     let mut offset = 0;
     while offset < tag_size as usize {
         // Check if we have enough bytes for a frame header
-        if offset + 10 > tag_size as usize {
+        if offset + FRAME_HEADER_SIZE > tag_buf.len() {
             break;
         }
 
-        // Read frame ID directly from bytes (much faster than full parsing)
-        let frame_id_bytes = &tag_buf[offset..offset + 4];
-        
-        // Check for empty frame (all zeros)
-        if frame_id_bytes.iter().all(|&b| b == 0) {
-            break;
-        }
-
-        let frame_id = String::from_utf8_lossy(frame_id_bytes);
-
-        // If this is our target frame, parse it fully
-        if frame_id == target_frame_id {
-            let frame = Frame::parse(&tag_buf[offset..], header.version)?;
-            return Ok(frame);
-        }
-
-        // Skip to next frame using size from header
+        // Security: Check that the frame header is not pointing outside the tag
         let size_bytes = [tag_buf[offset + 4], tag_buf[offset + 5], tag_buf[offset + 6], tag_buf[offset + 7]];
         let frame_size = u32::from_be_bytes(size_bytes) as usize;
-        offset += 10 + frame_size; // Header (10) + data size
+        if offset + FRAME_HEADER_SIZE + frame_size > tag_buf.len() {
+            // The frame size is invalid, stop parsing
+            warn!("Invalid frame size at offset {}", offset);
+            break;
+        }
+
+        // Check for empty frame (all zeros)
+        // If the frame ID is all zeros, it's an empty frame
+        // This can happen if the tag is truncated or corrupted
+        // Stop parsing if we reach an empty frame
+        if tag_buf[offset..offset + FRAME_ID_SIZE].iter().all(|&b| b == 0) {
+            warn!("Empty zeroed frame found at offset {}", offset);
+            break;
+        }
+
+        let frame = Frame::parse(&tag_buf[offset..], header.version)?;
+        if frame.is_empty() {
+            warn!("Empty frame found at offset {}", offset);
+            break;
+        }
+
+        let frame_size = frame.total_size();
+        if frame_size == 0 {
+            warn!("Invalid frame size at offset {}", offset);
+            break;
+        }
+
+        frames.entry(frame.id.clone()).or_insert_with(Vec::new).push(frame);
+        offset += frame_size;
     }
 
-    return Err(Error::FrameIdNotFound(target_frame_id.to_string()));
-}
-
-/// Get the version of an ID3v2 tag
-fn get_id3v2_version(path: &Path) -> Result<Version> {
-    let mut file = File::open(path)?;
-    let mut header_buf = [0u8; HEADER_SIZE];
-    file.read_exact(&mut header_buf)?;
-
-    let header = Header::parse(&header_buf)?;
-    if !header.is_valid() {
-        return Err(Error::InvalidHeader);
-    }
-
-    Ok(header.version.into())
+    Ok(Tag {
+        version: header.version.into(),
+        flags: header.flags,
+        frames,
+    })
 }
 
 #[derive(Debug)]
 pub struct TagReader {
     tag: Option<Tag>,
+}
+
+impl Default for TagReader {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TagReader {
@@ -90,19 +103,14 @@ impl TagReader {
 impl TagReaderStrategy for TagReader {
     fn init(&mut self, path: &Path) -> Result<()> {
         self.tag = if has_id3v2_tag(path).unwrap_or(false) {
-            let version = get_id3v2_version(path)?;
-            Some(Tag {
-                version,
-                flags: 0,
-                frames: HashMap::new(),
-            })
+            Some(read_tag(path)?)
         } else {
             None
         };
         Ok(())
     }
 
-    fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String> {
+    fn get_meta_entry(&self, _path: &Path, entry: &MetaEntry) -> Result<String> {
         // Use the cached tag info from init()
         let tag = self.tag.as_ref().ok_or(Error::TagNotFound)?;
         
@@ -110,13 +118,13 @@ impl TagReaderStrategy for TagReader {
         let frame_id = get_frame_id_for_version(entry, tag.version);
         
         if let Some(id) = frame_id {
-            match get_specific_frame(path, id) {
-                Ok(frame) => Ok(frame.content),
-                Err(_) => Err(Error::EntryNotFound),
+            if let Some(frames) = tag.frames.get(id) {
+                if let Some(frame) = frames.first() {
+                    return Ok(frame.content.clone());
+                }
             }
-        } else {
-            Err(Error::EntryNotFound)
         }
+        Err(Error::EntryNotFound)
     }
 
     fn tag_type(&self) -> TagType {
@@ -127,6 +135,12 @@ impl TagReaderStrategy for TagReader {
 #[derive(Debug)]
 pub struct TagWriter {
     path: PathBuf,
+}
+
+impl Default for TagWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TagWriter {
@@ -179,6 +193,17 @@ impl TagWriter {
         let mut frames = HashMap::new();
         let mut offset = 0;
         while offset < tag_size as usize {
+            // Security: Check that the frame header is not pointing outside the tag
+            if offset + FRAME_HEADER_SIZE > tag_buf.len() {
+                break;
+            }
+            let size_bytes = [tag_buf[offset + 4], tag_buf[offset + 5], tag_buf[offset + 6], tag_buf[offset + 7]];
+            let frame_size_from_header = u32::from_be_bytes(size_bytes) as usize;
+            if offset + FRAME_HEADER_SIZE + frame_size_from_header > tag_buf.len() {
+                // The frame size is invalid, stop parsing
+                break;
+            }
+
             let frame = Frame::parse(&tag_buf[offset..], header.version)?;
             if frame.is_empty() {
                 break;
@@ -206,7 +231,9 @@ impl TagWriterStrategy for TagWriter {
 
     fn set_meta_entry(&mut self, entry: &MetaEntry, value: &str) -> Result<()> {
         let version = if has_id3v2_tag(&self.path).unwrap_or(false) {
-            get_id3v2_version(&self.path)?
+            // If a tag exists, read its version to ensure we don't downgrade it.
+            let existing_tag = self.read_existing_tag()?;
+            existing_tag.version
         } else {
             Version::V3
         };
@@ -251,8 +278,6 @@ pub struct Tag {
     flags: u8,
     frames: HashMap<String, Vec<Frame>>,
 }
-
-// Rest of ID3v2 implementation moved here...
 
 fn get_frame_id_for_version(entry: &MetaEntry, version: Version) -> Option<&'static str> {
     match version {

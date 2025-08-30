@@ -13,7 +13,7 @@ pub mod validation;
 
 pub use error::{Error, Result};
 pub use meta_entry::MetaEntry;
-pub use tag::{TagReader, TagWriter, TagType, TagPresence};
+pub use tag::{TagReader, TagWriter, TagType};
 
 // Re-export common tag operations for convenience
 pub use tag::{

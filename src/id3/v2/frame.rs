@@ -2,6 +2,7 @@ use crate::error::{Error, Result};
 
 /// ID3v2 frame flags
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct FrameFlags {
     pub tag_alter_preservation: bool,
     pub file_alter_preservation: bool,
@@ -84,15 +85,3 @@ impl Frame {
     }
 }
 
-impl Default for FrameFlags {
-    fn default() -> Self {
-        Self {
-            tag_alter_preservation: false,
-            file_alter_preservation: false,
-            read_only: false,
-            compression: false,
-            encryption: false,
-            grouping_identity: false,
-        }
-    }
-}

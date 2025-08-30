@@ -2,7 +2,7 @@ use std::env;
 use std::path::Path;
 use std::process;
 
-use mp3tags_r::{TagWriter, MetaEntry, Result, Error};
+use mp3tags_r::{TagWriter, MetaEntry, Result, Error, tag::TagType};
 
 #[derive(Default)]
 struct TagOptions {
@@ -21,7 +21,7 @@ impl TagOptions {
     }
 }
 
-fn set_tag_value<P>(writer: &mut TagWriter, path: P, entry: &MetaEntry, value: &str, field_name: &str) -> Result<()>
+fn set_tag_value<P>(writer: &mut TagWriter, path: P, entry: MetaEntry, value: &str, field_name: &str) -> Result<()>
 where
     P: AsRef<Path>,
 {
@@ -31,7 +31,7 @@ where
         .unwrap_or_else(|| "Unknown".into());
     
     println!("Set {} of file: {} : {}", field_name, filename, value);
-    writer.set_meta_entry(entry, value)?;
+    writer.set_meta_entry(&entry, value)?;
     Ok(())
 }
 
@@ -42,36 +42,36 @@ fn change_tags_in_file<P: AsRef<Path>>(file_path: P, options: &TagOptions) -> Re
         return Err(Error::Other(format!("File does not exist: {}", path.display())));
     }
     
-    let mut writer = TagWriter::new(path)?;
+    let mut writer = TagWriter::new(path, TagType::Id3v2)?;
     let mut changes_made = false;
     
     if let Some(ref title) = options.title {
-        set_tag_value(&mut writer, path, &MetaEntry::Title, title, "title")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Title, title, "title")?;
         changes_made = true;
     }
     
     if let Some(ref artist) = options.artist {
-        set_tag_value(&mut writer, path, &MetaEntry::Artist, artist, "artist")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Artist, artist, "artist")?;
         changes_made = true;
     }
     
     if let Some(ref album) = options.album {
-        set_tag_value(&mut writer, path, &MetaEntry::Album, album, "album")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Album, album, "album")?;
         changes_made = true;
     }
     
     if let Some(ref genre) = options.genre {
-        set_tag_value(&mut writer, path, &MetaEntry::Genre, genre, "genre")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Genre, genre, "genre")?;
         changes_made = true;
     }
     
     if let Some(ref year) = options.year {
-        set_tag_value(&mut writer, path, &MetaEntry::Year, year, "year")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Year, year, "year")?;
         changes_made = true;
     }
     
     if let Some(ref comment) = options.comment {
-        set_tag_value(&mut writer, path, &MetaEntry::Comment, comment, "comment")?;
+        set_tag_value(&mut writer, &path, MetaEntry::Comment, comment, "comment")?;
         changes_made = true;
     }
     

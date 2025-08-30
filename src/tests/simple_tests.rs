@@ -1,4 +1,4 @@
-use crate::{TagWriter, TagReader, MetaEntry};
+use crate::{TagWriter, TagReader, MetaEntry, tag::TagType};
 use std::fs::copy;
 use tempfile::tempdir;
 
@@ -11,7 +11,7 @@ fn test_write_and_read_single_tag() {
     copy("audio_files/mp3_44100Hz_128kbps_stereo.mp3", &test_file).unwrap();
 
     // Write a single tag
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Title, "Test Title").unwrap();
 
     // Read it back
@@ -29,7 +29,7 @@ fn test_write_multiple_tags() {
     copy("audio_files/mp3_44100Hz_128kbps_stereo.mp3", &test_file).unwrap();
 
     // Write multiple tags
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Title, "Multi Title").unwrap();
     writer.set_meta_entry(&MetaEntry::Artist, "Multi Artist").unwrap();
     writer.set_meta_entry(&MetaEntry::Album, "Multi Album").unwrap();
@@ -50,11 +50,11 @@ fn test_tag_preservation() {
     copy("audio_files/mp3_44100Hz_128kbps_stereo.mp3", &test_file).unwrap();
 
     // Write first tag
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Title, "Original Title").unwrap();
 
     // Write second tag (should preserve first)
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Artist, "New Artist").unwrap();
 
     // Verify both tags exist
@@ -73,7 +73,7 @@ fn test_unicode_content() {
     let unicode_title = "Test 测试 🎵";
     
     // Write unicode tag
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Title, unicode_title).unwrap();
 
     // Read it back
@@ -91,7 +91,7 @@ fn test_empty_tag_values() {
     copy("audio_files/mp3_44100Hz_128kbps_stereo.mp3", &test_file).unwrap();
 
     // Write empty tag
-    let mut writer = TagWriter::new(&test_file).unwrap();
+    let mut writer = TagWriter::new(&test_file, TagType::Id3v2).unwrap();
     writer.set_meta_entry(&MetaEntry::Title, "").unwrap();
 
     // Read it back

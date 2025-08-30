@@ -82,7 +82,7 @@ impl ApeTagHeader {
         let mut identifier = [0u8; 8];
         identifier.copy_from_slice(&buffer[0..8]);
         
-        if &identifier != constants::APE_TAG_IDENTIFIER {
+        if identifier != constants::APE_TAG_IDENTIFIER {
             return Err(Error::TagNotFound);
         }
         

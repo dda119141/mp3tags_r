@@ -64,6 +64,12 @@ impl Header {
     }
 }
 
+impl Default for ExtendedHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExtendedHeader {
     pub fn new() -> Self {
         Self {

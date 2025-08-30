@@ -81,7 +81,7 @@ pub fn extract_string(buffer: &[u8], start: usize, length: usize) -> Result<Stri
     // Filter out non-printable characters
     let filtered: Vec<u8> = bytes
         .iter()
-        .filter(|&&b| b >= 32 && b <= 126)
+        .filter(|&&b| (32..=126).contains(&b))
         .cloned()
         .collect();
     
@@ -123,12 +123,12 @@ pub fn update_size_field(buffer: &mut [u8], start: usize, length: usize, extra_s
     let bytes = &mut buffer[start..start + length];
     
     if big_endian {
-        for i in 0..length {
-            bytes[i] = ((current_size >> ((length - 1 - i) * 8)) & 0xFF) as u8;
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = ((current_size >> ((length - 1 - i) * 8)) & 0xFF) as u8;
         }
     } else {
-        for i in 0..length {
-            bytes[i] = ((current_size >> (i * 8)) & 0xFF) as u8;
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = ((current_size >> (i * 8)) & 0xFF) as u8;
         }
     }
 
@@ -141,11 +141,5 @@ pub fn search_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return None;
     }
 
-    for i in 0..=haystack.len() - needle.len() {
-        if haystack[i..i + needle.len()] == needle[..] {
-            return Some(i);
-        }
-    }
-
-    None
+    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == needle[..])
 }

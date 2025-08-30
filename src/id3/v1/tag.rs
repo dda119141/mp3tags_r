@@ -31,7 +31,7 @@ pub fn has_id3v1_tag(path: &std::path::Path) -> crate::Result<bool> {
     file.seek(SeekFrom::End(-(ID3V1_TAG_SIZE as i64)))?;
     let mut tag = [0u8; IDENTIFIER_SIZE];
     file.read_exact(&mut tag)?;
-    Ok(&tag == ID3V1_IDENTIFIER)
+    Ok(tag == ID3V1_IDENTIFIER)
 }
 
 #[derive(Debug)]
@@ -57,12 +57,24 @@ pub struct Tag {
     pub genre: [u8; GENRE_SIZE],
 }
 
+impl Default for TagReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TagReader {
     pub fn new() -> Self {
         Self {
             path: PathBuf::new(),
             tag: None,
         }
+    }
+}
+
+impl Default for TagWriter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

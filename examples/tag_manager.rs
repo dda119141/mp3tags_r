@@ -107,27 +107,28 @@ fn get_tag(file_path: &Path, tag: &str) -> Result<()> {
     Ok(())
 }
 
-fn set_tag(file_path: &Path, tag: &str, value: &str, tag_type: Option<&str>) -> Result<()> {
+fn set_tag(file_path: &Path, tag: &str, value: &str, tag_type_str: Option<&str>) -> Result<()> {
     // Parse the meta entry
     let meta_entry = parse_meta_entry(tag).map_err(|e| Error::Other(format!("Invalid tag: {}", e)))?;
     
-    // Create a new tag writer
-    let mut writer = TagWriter::new(file_path)?;
-    
-    // Set preferred tag type if specified
-    if let Some(tag_type_str) = tag_type {
-        match tag_type_str.to_lowercase().as_str() {
-            "id3v1" => writer.set_preferred_tag_type(TagType::Id3v1),
-            "id3v2" => writer.set_preferred_tag_type(TagType::Id3v2),
-            "ape" => writer.set_preferred_tag_type(TagType::Ape),
-            _ => eprintln!("Warning: Unknown tag type '{}', using default", tag_type_str),
+    // Parse tag type from argument or use default
+    let tag_type = if let Some(type_str) = tag_type_str {
+        match type_str.to_lowercase().as_str() {
+            "ape" => TagType::Ape,
+            "id3v1" => TagType::Id3v1,
+            "id3v2" => TagType::Id3v2,
+            _ => return Err(Error::Other(format!("Invalid tag type: {}", type_str)))
         }
-    }
+    } else {
+        TagType::Id3v2 // Default to ID3v2
+    };
+    
+    let mut writer = TagWriter::new(file_path, tag_type)?;
     
     // Set the meta entry
     writer.set_meta_entry(&meta_entry, value)?;
     
-    println!("Tag '{}' set to '{}'.", tag, value);
+    println!("Tag '{}' set to '{}' using {:?} format.", tag, value, tag_type);
     Ok(())
 }
 
@@ -136,7 +137,7 @@ fn remove_tag(file_path: &Path, tag: &str) -> Result<()> {
     let meta_entry = parse_meta_entry(tag).map_err(|e| Error::Other(format!("Invalid tag: {}", e)))?;
     
     // Create a new tag writer
-    let mut writer = TagWriter::new(file_path)?;
+    let mut writer = TagWriter::new(file_path, TagType::Id3v2)?;
     
     // For now, we'll just set the entry to an empty string
     // This is a simple way to "remove" the tag
@@ -148,7 +149,7 @@ fn remove_tag(file_path: &Path, tag: &str) -> Result<()> {
 
 fn clear_tags(file_path: &Path) -> Result<()> {
     // Create a new tag writer
-    let mut writer = TagWriter::new(file_path)?;
+    let mut writer = TagWriter::new(file_path, TagType::Id3v2)?;
     
     // For each meta entry type, set it to empty string
     let entries = [

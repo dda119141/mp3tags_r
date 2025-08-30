@@ -16,18 +16,6 @@ pub enum TagType {
     Ape,
 }
 
-/// Tag presence information
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TagPresence {
-    /// ID3v1 tag is present
-    pub id3v1_present: bool,
-    /// ID3v2 tag is present
-    pub id3v2_present: bool,
-    /// APE tag is present
-    pub ape_present: bool,
-}
-
-
 /// Simple trait for tag readers
 pub trait TagReaderStrategy {
     /// Initialize the tag reader
@@ -55,47 +43,22 @@ pub trait TagWriterStrategy {
     fn tag_type(&self) -> TagType;
 }
 
-/// Enum representing different tag reading strategies
-#[derive(Debug)]
-pub enum ReaderStrategy {
-    Id3v1(crate::id3::v1::tag::TagReader),
-    Id3v2(crate::id3::v2::tag::TagReader),
-    Ape(crate::ape::ApeReader),
+struct ReaderStrategy {
+    selected: Box<dyn TagReaderStrategy>,
+    initialized: bool,
 }
 
-impl ReaderStrategy {
-    /// Get the tag type for this strategy
-    pub fn tag_type(&self) -> TagType {
-        match self {
-            ReaderStrategy::Id3v1(_) => TagType::Id3v1,
-            ReaderStrategy::Id3v2(_) => TagType::Id3v2,
-            ReaderStrategy::Ape(_) => TagType::Ape,
-        }
-    }
-    
-    /// Initialize this strategy
-    pub fn init(&mut self, path: &Path) -> Result<()> {
-        match self {
-            ReaderStrategy::Id3v1(reader) => reader.init(path),
-            ReaderStrategy::Id3v2(reader) => reader.init(path),
-            ReaderStrategy::Ape(reader) => reader.init(path),
-        }
-    }
-    
-    /// Get a meta entry using this strategy
-    pub fn get_meta_entry(&self, path: &Path, entry: &MetaEntry) -> Result<String> {
-        match self {
-            ReaderStrategy::Id3v1(reader) => reader.get_meta_entry(path, entry),
-            ReaderStrategy::Id3v2(reader) => reader.get_meta_entry(path, entry),
-            ReaderStrategy::Ape(reader) => reader.get_meta_entry(path, entry),
-        }
-    }
+struct WriterStrategy {
+    selected: Box<dyn TagWriterStrategy>,
+    initialized: bool,
 }
 
 /// Main tag reader class that uses the strategy pattern
 pub struct TagReader {
     path: PathBuf,
-    pub strategies: Vec<ReaderStrategy>,
+
+    //pair of strategy and initialized flag
+    strategies: Vec<ReaderStrategy>
 }
 
 impl TagReader {
@@ -103,65 +66,34 @@ impl TagReader {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         
-        // Create strategies for each tag type in order of preference: ID3v2 > ID3v1 > APE
-        let strategies = vec![
-            ReaderStrategy::Id3v2(crate::id3::v2::tag::TagReader::new()),
-            ReaderStrategy::Id3v1(crate::id3::v1::tag::TagReader::new()),
-            ReaderStrategy::Ape(crate::ape::ApeReader::new()),
+        // Create strategies in order of preference
+        let mut strategies: Vec<ReaderStrategy> = vec![
+            ReaderStrategy { selected: Box::new(crate::id3::v2::tag::TagReader::new()), initialized: false },
+            ReaderStrategy { selected: Box::new(crate::id3::v1::tag::TagReader::new()), initialized: false },
+            ReaderStrategy { selected: Box::new(crate::ape::ApeReader::new()), initialized: false },
         ];
         
-        let mut reader = Self {
-            path,
-            strategies,
-        };
-        
-        reader.init_strategies()?;
-        
-        Ok(reader)
-    }
-    
-    /// Initialize the reader - now properly initializes all strategies
-    fn init_strategies(&mut self) -> Result<()> {
-        for strategy in &mut self.strategies {
-            let _ = strategy.init(&self.path); // Don't fail if one strategy fails
+        // Initialize all strategies
+        for strategy in &mut strategies {
+            let handle = strategy.selected.init(&path);
+            strategy.initialized = handle.is_ok();
         }
-        Ok(())
+        
+        Ok(Self { path, strategies })
     }
     
     /// Get a meta entry from the tag
     pub fn get_meta_entry(&self, entry: &MetaEntry) -> Result<String> {
-        // Try each strategy in order until we find a value
         for strategy in &self.strategies {
-            if let Ok(value) = strategy.get_meta_entry(&self.path, entry) {
-                return Ok(value);
+            if strategy.initialized {
+                if let Ok(value) = strategy.selected.get_meta_entry(&self.path, entry) {
+                    return Ok(value);
+                }
             }
         }
-
-        // If no tag was found after trying all strategies, return an error.
         Err(Error::EntryNotFound)
     }
-    
-    /// Add a strategy to the reader
-    pub fn add_strategy(&mut self, strategy: ReaderStrategy) -> Result<()> {
-        self.strategies.push(strategy);
-        Ok(())
-    }
-    
-    /// Get tag presence information
-    pub fn tag_presence(&self) -> TagPresence {
-        let mut presence = TagPresence::default();
-        
-        for strategy in &self.strategies {
-            match strategy.tag_type() {
-                TagType::Id3v1 => presence.id3v1_present = true,
-                TagType::Id3v2 => presence.id3v2_present = true,
-                TagType::Ape => presence.ape_present = true,
-            }
-        }
-        
-        presence
-    }
-    
+      
     /// Get all meta entries from the tag
     pub fn get_all_meta_entries(&self) -> HashMap<MetaEntry, String> {
         let mut entries = HashMap::new();
@@ -176,177 +108,63 @@ impl TagReader {
     }
 }
 
-/// Enum representing different tag writing strategies
-#[derive(Debug)]
-pub enum WriterStrategy {
-    Id3v1(crate::id3::v1::tag::TagWriter),
-    Id3v2(crate::id3::v2::tag::TagWriter),
-    Ape(crate::ape::ApeWriter),
-}
-
-impl WriterStrategy {
-    /// Get the tag type for this strategy
-    pub fn tag_type(&self) -> TagType {
-        match self {
-            WriterStrategy::Id3v1(_) => TagType::Id3v1,
-            WriterStrategy::Id3v2(_) => TagType::Id3v2,
-            WriterStrategy::Ape(_) => TagType::Ape,
-        }
-    }
-    
-    /// Initialize the writer strategy
-    pub fn init(&mut self, path: &Path) -> Result<()> {
-        match self {
-            WriterStrategy::Id3v1(writer) => writer.init(path),
-            WriterStrategy::Id3v2(writer) => writer.init(path),
-            WriterStrategy::Ape(writer) => writer.init(path),
-        }
-    }
-    
-    /// Set a meta entry using this strategy
-    pub fn set_meta_entry(&mut self, entry: &MetaEntry, value: &str) -> Result<()> {
-        match self {
-            WriterStrategy::Id3v1(writer) => writer.set_meta_entry(entry, value),
-            WriterStrategy::Id3v2(writer) => writer.set_meta_entry(entry, value),
-            WriterStrategy::Ape(writer) => writer.set_meta_entry(entry, value),
-        }
-    }
-    
-    /// Save changes using this strategy
-    pub fn save(&mut self) -> Result<()> {
-        match self {
-            WriterStrategy::Id3v1(writer) => writer.save(),
-            WriterStrategy::Id3v2(writer) => writer.save(),
-            WriterStrategy::Ape(writer) => writer.save(),
-        }
-    }
-}
-
 /// Main tag writer class that uses the strategy pattern
 pub struct TagWriter {
-    path: PathBuf,
-    pub strategies: Vec<WriterStrategy>,
-    preferred_tag_type: TagType,
-}
-
-/// Builder for TagWriter
-pub struct TagWriterBuilder {
-    path: PathBuf,
     strategies: Vec<WriterStrategy>,
     preferred_tag_type: TagType,
 }
 
-impl TagWriterBuilder {
-    /// Create a new TagWriterBuilder
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-            strategies: Vec::new(),
-            preferred_tag_type: TagType::Id3v2, // Default to ID3v2
-        }
-    }
-    
-    /// Set the preferred tag type
-    pub fn with_preferred_tag_type(mut self, tag_type: TagType) -> Self {
-        self.preferred_tag_type = tag_type;
-        self
-    }
-    
-    /// Add a custom strategy
-    pub fn with_strategy(mut self, strategy: WriterStrategy) -> Self {
-        self.strategies.push(strategy);
-        self
-    }
-    
-    /// Build the TagWriter
-    pub fn build(mut self) -> Result<TagWriter> {
-        // If no strategies were added, add the default ones in order of preference: ID3v2 > ID3v1 > APE
-        if self.strategies.is_empty() {
-            self.strategies.push(WriterStrategy::Id3v2(crate::id3::v2::tag::TagWriter::new()));
-            self.strategies.push(WriterStrategy::Id3v1(crate::id3::v1::tag::TagWriter::new()));
-            self.strategies.push(WriterStrategy::Ape(crate::ape::ApeWriter::new()));
-        }
-        
-        let mut writer = TagWriter {
-            path: self.path,
-            strategies: self.strategies,
-            preferred_tag_type: self.preferred_tag_type,
-        };
-        
-        writer.init()?;
-        
-        Ok(writer)
-    }
-}
-
 impl TagWriter {
     /// Create a new tag writer for the given path
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        TagWriterBuilder::new(path).build()
-    }
-    
-    /// Initialize the writer
-    fn init(&mut self) -> Result<()> {
-        // Initialize each strategy
-        for strategy in &mut self.strategies {
-            let _ = strategy.init(&self.path);
+    pub fn new<P: AsRef<Path>>(path: P, preferred_tag_type: TagType) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        
+        // Create strategies in order of preference
+        let mut strategies: Vec<WriterStrategy> = vec![
+            WriterStrategy { selected: Box::new(crate::id3::v2::tag::TagWriter::new()), initialized: false },
+            WriterStrategy { selected: Box::new(crate::id3::v1::tag::TagWriter::new()), initialized: false },
+            WriterStrategy { selected: Box::new(crate::ape::ApeWriter::new()), initialized: false },
+        ];
+        
+        // Initialize all strategies
+        for strategy in &mut strategies {
+            let handle = strategy.selected.init(&path);
+            strategy.initialized = handle.is_ok();
         }
         
-        Ok(())
-    }
-    
-    /// Set the preferred tag type for writing
-    pub fn set_preferred_tag_type(&mut self, tag_type: TagType) {
-        self.preferred_tag_type = tag_type;
+        Ok(Self {  
+            strategies,
+            preferred_tag_type,
+        })
     }
     
     /// Set a meta entry in the tag
     pub fn set_meta_entry(&mut self, entry: &MetaEntry, value: &str) -> Result<()> {
-        // First try to write to the preferred tag type
-        for strategy in &mut self.strategies {
-            if strategy.tag_type() == self.preferred_tag_type {
-                let _ = strategy.set_meta_entry(&entry, value)?;
-                let _ = strategy.save()?;
+        // First, try to find and use the preferred strategy if it's initialized.
+        if let Some(strategy) = self.strategies.iter_mut().find(|s| s.initialized && 
+                s.selected.tag_type() == self.preferred_tag_type) {
+            return strategy.selected.set_meta_entry(entry, value);
+        }
+
+        // If the preferred strategy is not available or fails, try any other initialized strategy.
+        for strategy in self.strategies.iter_mut().filter(|s| s.initialized) {
+            if strategy.selected.set_meta_entry(entry, value).is_ok() {
                 return Ok(());
             }
         }
         
-        // Try each strategy in order of preference
-        for strategy in &mut self.strategies {
-            // Try to set the entry using this strategy
-            let _ = strategy.set_meta_entry(&entry, value)?;
-            let _ = strategy.save()?;
-            return Ok(());
-        }
-        
-        // If that failed too, create a new tag of the preferred type
-        for strategy in &mut self.strategies {
-            if strategy.tag_type() == self.preferred_tag_type {
-                let _ = strategy.set_meta_entry(&entry, value)?;
-                let _ = strategy.save()?;
-                return Ok(());
-            }
-        }
-        
-        Err(Error::Other("Failed to set meta entry".to_string()))
-    }
-    
-    /// Add a strategy to the writer
-    pub fn add_strategy(&mut self, strategy: WriterStrategy) -> Result<()> {
-        self.strategies.push(strategy);
-        Ok(())
+        Err(Error::Other("Failed to set meta entry with any available strategy".to_string()))
     }
     
     /// Remove a meta entry from the tag
-    pub fn remove_meta_entry(&mut self, entry: MetaEntry) -> Result<()> {
-        // For now, just set to empty string - actual removal would need strategy-specific implementation
-        self.set_meta_entry(&entry, "")
+    pub fn remove_meta_entry(&mut self, entry: &MetaEntry) -> Result<()> {
+        self.set_meta_entry(entry, "")
     }
     
     /// Remove multiple meta entries from the tag
     pub fn remove_meta_entries(&mut self, entries: &[MetaEntry]) -> Result<()> {
         for entry in entries {
-            self.remove_meta_entry(entry.clone())?;
+            self.remove_meta_entry(entry)?;
         }
         Ok(())
     }
@@ -356,9 +174,7 @@ impl TagWriter {
         let all_entries = crate::meta_entry::all_standard_entries();
         self.remove_meta_entries(&all_entries)
     }
-    
 }
-
 // Convenience functions
 
 /// Get the title of an MP3 file
