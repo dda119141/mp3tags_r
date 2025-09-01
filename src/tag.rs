@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-
-use crate::meta_entry::MetaEntry;
-use crate::error::Error;
-use crate::Result;
+use crate::{Result, MetaEntry, Error};
+use crate::file_access::{FileManager};
 
 /// Represents the type of tag
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +64,10 @@ impl TagReader {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         
+        // Create file manager and validate file
+        let file_manager = FileManager::with_default_strategy();
+        file_manager.validate_file_path(&path)?;
+        
         // Create strategies in order of preference
         let mut strategies: Vec<ReaderStrategy> = vec![
             ReaderStrategy { selected: Box::new(crate::id3::v2::tag::TagReader::new()), initialized: false },
@@ -118,6 +120,10 @@ impl TagWriter {
     /// Create a new tag writer for the given path
     pub fn new<P: AsRef<Path>>(path: P, preferred_tag_type: TagType) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        
+        // Create file manager and validate file
+        let file_manager = FileManager::with_default_strategy();
+        file_manager.validate_file_path(&path)?;
         
         // Create strategies in order of preference
         let mut strategies: Vec<WriterStrategy> = vec![
