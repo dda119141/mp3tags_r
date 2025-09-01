@@ -1,9 +1,24 @@
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use crate::{Result, MetaEntry};
 
-use crate::meta_entry::MetaEntry;
-use crate::error::Error;
-use crate::Result;
+/// Validate that a path exists and is a readable file
+fn validate_file_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("File not found: {}", path.display())
+        )));
+    }
+    
+    if !path.is_file() {
+        return Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Path is not a file: {}", path.display())
+        )));
+    }
+    
+    Ok(())
+}
 
 /// Represents the type of tag
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +81,9 @@ impl TagReader {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         
+        // Validate file exists and is readable
+        validate_file_path(&path)?;
+        
         // Create strategies in order of preference
         let mut strategies: Vec<ReaderStrategy> = vec![
             ReaderStrategy { selected: Box::new(crate::id3::v2::tag::TagReader::new()), initialized: false },
@@ -118,6 +136,9 @@ impl TagWriter {
     /// Create a new tag writer for the given path
     pub fn new<P: AsRef<Path>>(path: P, preferred_tag_type: TagType) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        
+        // Validate file exists and is accessible
+        validate_file_path(&path)?;
         
         // Create strategies in order of preference
         let mut strategies: Vec<WriterStrategy> = vec![

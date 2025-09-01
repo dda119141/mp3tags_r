@@ -19,68 +19,163 @@ use crate::tag::{TagReaderStrategy, TagType, TagWriterStrategy};
 const FRAME_HEADER_SIZE: usize = 10;
 const FRAME_ID_SIZE: usize = 4;
 
-/// Read all frames from an ID3v2 tag
-fn read_tag(path: &Path) -> Result<Tag> {
-    let mut file = File::open(path)?;
-    let mut header_buf = [0u8; HEADER_SIZE];
-    file.read_exact(&mut header_buf)?;
-
-    let header = Header::parse(&header_buf)?;
-    if !header.is_valid() {
-        return Err(Error::InvalidHeader);
+/// Template Method Pattern for ID3v2 tag parsing
+trait TagParser {
+    /// Template method - defines the parsing algorithm
+    fn parse_tag(&self, path: &Path) -> Result<Tag> {
+        let mut file = self.open_file(path)?;
+        let header = self.read_and_parse_header(&mut file)?;
+        let tag_data = self.read_tag_data(&mut file, &header)?;
+        let frames = self.parse_frames(&tag_data, &header)?;
+        self.build_tag(header, frames)
     }
 
-    let tag_size = header.size;
-    let mut tag_buf = vec![0u8; tag_size as usize];
-    file.read_exact(&mut tag_buf)?;
+    /// Hook method - can be overridden for different file opening strategies
+    fn open_file(&self, path: &Path) -> Result<File> {
+        File::open(path).map_err(Error::from)
+    }
 
-    let mut frames = HashMap::new();
-    let mut offset = 0;
-    while offset < tag_size as usize {
+    /// Concrete method - reads and parses the ID3v2 header
+    fn read_and_parse_header(&self, file: &mut File) -> Result<Header> {
+        let mut header_buf = [0u8; HEADER_SIZE];
+        file.read_exact(&mut header_buf)?;
+
+        let header = Header::parse(&header_buf)?;
+        if !header.is_valid() {
+            return Err(Error::InvalidHeader);
+        }
+        Ok(header)
+    }
+
+    /// Concrete method - reads the tag data based on header size
+    fn read_tag_data(&self, file: &mut File, header: &Header) -> Result<Vec<u8>> {
+        let tag_size = header.size;
+        let mut tag_buf = vec![0u8; tag_size as usize];
+        file.read_exact(&mut tag_buf)?;
+        Ok(tag_buf)
+    }
+
+    /// Concrete method - parses all frames from tag data
+    fn parse_frames(&self, tag_buf: &[u8], header: &Header) -> Result<HashMap<String, Vec<Frame>>> {
+        let mut frames = HashMap::new();
+        let mut offset = 0;
+        let tag_size = tag_buf.len();
+
+        while offset < tag_size {
+            match self.parse_single_frame(tag_buf, &mut offset, header) {
+                Ok(Some(frame)) => {
+                    self.collect_frame(&mut frames, frame);
+                }
+                Ok(None) => break, // End of frames
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(frames)
+    }
+
+    /// Parse a single frame at the given offset
+    fn parse_single_frame(&self, tag_buf: &[u8], offset: &mut usize, header: &Header) -> Result<Option<Frame>> {
         // Check if we have enough bytes for a frame header
-        if offset + FRAME_HEADER_SIZE > tag_buf.len() {
-            break;
+        if *offset + FRAME_HEADER_SIZE > tag_buf.len() {
+            return Ok(None);
         }
 
         // Security: Check that the frame header is not pointing outside the tag
-        let size_bytes = [tag_buf[offset + 4], tag_buf[offset + 5], tag_buf[offset + 6], tag_buf[offset + 7]];
+        let size_bytes = [tag_buf[*offset + 4], tag_buf[*offset + 5], tag_buf[*offset + 6], tag_buf[*offset + 7]];
         let frame_size = u32::from_be_bytes(size_bytes) as usize;
-        if offset + FRAME_HEADER_SIZE + frame_size > tag_buf.len() {
+        if *offset + FRAME_HEADER_SIZE + frame_size > tag_buf.len() {
             // The frame size is invalid, stop parsing
-            warn!("Invalid frame size at offset {}", offset);
-            break;
+            warn!("Invalid frame size at offset {}", *offset);
+            return Ok(None);
         }
 
-        // Check for empty frame (all zeros)
-        // If the frame ID is all zeros, it's an empty frame
-        // This can happen if the tag is truncated or corrupted
-        // Stop parsing if we reach an empty frame
-        if tag_buf[offset..offset + FRAME_ID_SIZE].iter().all(|&b| b == 0) {
-            warn!("Empty zeroed frame found at offset {}", offset);
-            break;
+        // Check for empty frame (all zeros) - can be overridden
+        if self.should_check_empty_frame_id() && tag_buf[*offset..*offset + FRAME_ID_SIZE].iter().all(|&b| b == 0) {
+            warn!("Empty zeroed frame found at offset {}", *offset);
+            return Ok(None);
         }
 
-        let frame = Frame::parse(&tag_buf[offset..], header.version)?;
+        let frame = Frame::parse(&tag_buf[*offset..], header.version)?;
         if frame.is_empty() {
-            warn!("Empty frame found at offset {}", offset);
-            break;
+            warn!("Empty frame found at offset {}", *offset);
+            return Ok(None);
         }
 
         let frame_size = frame.total_size();
         if frame_size == 0 {
-            warn!("Invalid frame size at offset {}", offset);
-            break;
+            warn!("Invalid frame size at offset {}", *offset);
+            return Ok(None);
         }
 
-        frames.entry(frame.id.clone()).or_insert_with(Vec::new).push(frame);
-        offset += frame_size;
+        // Validate frame ID if validation is enabled
+        if self.should_validate_frame_ids() && !self.is_supported_frame(&frame.id, header.version.into()) {
+            warn!("Unsupported frame ID '{}' found at offset {}", frame.id, *offset);
+            *offset += frame_size;
+            return Ok(None); // Skip unsupported frames
+        }
+
+        *offset += frame_size;
+        Ok(Some(frame))
     }
 
-    Ok(Tag {
-        version: header.version.into(),
-        flags: header.flags,
-        frames,
-    })
+    /// Hook method - whether to check for empty frame IDs
+    fn should_check_empty_frame_id(&self) -> bool {
+        true
+    }
+
+    /// Hook method - whether to validate frame IDs before collecting
+    fn should_validate_frame_ids(&self) -> bool {
+        true
+    }
+
+    /// Check if a frame ID is supported for the given version
+    fn is_supported_frame(&self, frame_id: &str, version: Version) -> bool {
+        match version {
+            Version::V2 => v2_0::is_supported_frame(frame_id),
+            Version::V3 | Version::V4 => v3_v4::is_supported_frame(frame_id),
+        }
+    }
+
+    /// Strategy method - how to collect/store parsed frames
+    fn collect_frame(&self, frames: &mut HashMap<String, Vec<Frame>>, frame: Frame) {
+        frames.entry(frame.id.clone()).or_default().push(frame);
+    }
+
+    /// Concrete method - builds the final Tag struct
+    fn build_tag(&self, header: Header, frames: HashMap<String, Vec<Frame>>) -> Result<Tag> {
+        Ok(Tag {
+            version: header.version.into(),
+            flags: header.flags,
+            frames,
+        })
+    }
+}
+
+/// Default implementation of TagParser
+struct DefaultTagParser;
+
+impl TagParser for DefaultTagParser {}
+
+/// Parser for existing tags - uses different frame insertion strategy
+struct ExistingTagParser;
+
+impl TagParser for ExistingTagParser {
+    /// Don't check for empty frame IDs to match original read_existing_tag behavior
+    fn should_check_empty_frame_id(&self) -> bool {
+        false
+    }
+
+    /// Use insert instead of entry().or_insert_with() to match original behavior
+    fn collect_frame(&self, frames: &mut HashMap<String, Vec<Frame>>, frame: Frame) {
+        frames.insert(frame.id.to_string(), vec![frame]);
+    }
+}
+
+/// Read all frames from an ID3v2 tag using Template Method Pattern
+fn read_tag(path: &Path) -> Result<Tag> {
+    let parser = DefaultTagParser;
+    parser.parse_tag(path)
 }
 
 #[derive(Debug)]
@@ -177,49 +272,8 @@ impl TagWriter {
     }
 
     fn read_existing_tag(&self) -> Result<Tag> {
-        let mut file = File::open(&self.path)?;
-        let mut header_buf = [0u8; HEADER_SIZE];
-        file.read_exact(&mut header_buf)?;
-
-        let header = Header::parse(&header_buf)?;
-        if !header.is_valid() {
-            return Err(Error::InvalidHeader);
-        }
-
-        let tag_size = header.size;
-        let mut tag_buf = vec![0u8; tag_size as usize];
-        file.read_exact(&mut tag_buf)?;
-
-        let mut frames = HashMap::new();
-        let mut offset = 0;
-        while offset < tag_size as usize {
-            // Security: Check that the frame header is not pointing outside the tag
-            if offset + FRAME_HEADER_SIZE > tag_buf.len() {
-                break;
-            }
-            let size_bytes = [tag_buf[offset + 4], tag_buf[offset + 5], tag_buf[offset + 6], tag_buf[offset + 7]];
-            let frame_size_from_header = u32::from_be_bytes(size_bytes) as usize;
-            if offset + FRAME_HEADER_SIZE + frame_size_from_header > tag_buf.len() {
-                // The frame size is invalid, stop parsing
-                break;
-            }
-
-            let frame = Frame::parse(&tag_buf[offset..], header.version)?;
-            if frame.is_empty() {
-                break;
-            }
-
-            let frame_size = frame.total_size();
-            frames.insert(frame.id.to_string(), vec![frame]);
-
-            offset += frame_size;
-        }
-
-        Ok(Tag {
-            version: header.version.into(),
-            flags: header.flags,
-            frames,
-        })
+        let parser = ExistingTagParser;
+        parser.parse_tag(&self.path)
     }
 }
 
