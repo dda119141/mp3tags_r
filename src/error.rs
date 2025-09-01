@@ -93,7 +93,10 @@ pub enum Error {
 
     #[error("Validation error: {0}")]
     ValidationError(#[from] ValidationError),
-    
+
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+
     /// Error when a meta entry is not found
     #[error("Meta entry not found")]
     EntryNotFound,

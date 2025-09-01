@@ -10,6 +10,7 @@ pub mod tag;
 pub mod id3;
 pub mod ape;
 pub mod validation;
+pub mod file_access;
 
 pub use error::{Error, Result};
 pub use meta_entry::MetaEntry;
